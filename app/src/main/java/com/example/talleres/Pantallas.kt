@@ -18,7 +18,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -26,6 +30,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -48,8 +60,44 @@ fun TalleresApp() {
     val snack = remember { SnackbarHostState() }
     val navController = rememberNavController() // Controlador de historial
 
+    // Aviso con acción "Deshacer" cuando corresponde (más tiempo en pantalla si hay acción)
     LaunchedEffect(s.mensaje) {
-        s.mensaje?.let { snack.showSnackbar(it); s.mensaje = null }
+        val texto = s.mensaje ?: return@LaunchedEffect
+        val accion = s.deshacer
+        s.deshacer = null
+        val r = snack.showSnackbar(
+            message = texto,
+            actionLabel = if (accion != null) "Deshacer" else null,
+            duration = if (accion != null) SnackbarDuration.Long else SnackbarDuration.Short
+        )
+        if (r == SnackbarResult.ActionPerformed) accion?.invoke()
+        if (s.mensaje == texto) s.mensaje = null
+    }
+
+    // Confirmación persistente con resumen: no desaparece sola
+    s.confirmacion?.let { c ->
+        AlertDialog(
+            onDismissRequest = { s.confirmacion = null },
+            title = { Text("¡Taller agregado al Horario ${c.horario}!") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(c.taller.nombre, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("Docente: ${c.seccion.docente}")
+                    Text("Horas: ${c.seccion.horas}")
+                    Text("Vacantes restantes: ${s.vacantesDe(c.seccion)}")
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        s.confirmacion = null
+                        navController.navigate(Ruta.Horarios.ruta) { launchSingleTop = true }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Burdeos700)
+                ) { Text("Ver mis horarios") }
+            },
+            dismissButton = { TextButton(onClick = { s.confirmacion = null }) { Text("Cerrar") } }
+        )
     }
 
     Scaffold(
@@ -94,7 +142,8 @@ fun LoginScreen(s: AppState, navController: NavController) {
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(Modifier.navigationBarsPadding().padding(24.dp)) {
-                Text("Te damos la bienvenida", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Burdeos800)
+                Text("Te damos la bienvenida", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Burdeos800,
+                    modifier = Modifier.semantics { heading() })
                 Spacer(Modifier.height(6.dp))
                 Text("Inicia sesión con tu cuenta de Google para elegir tus talleres.",
                     color = TextoSuave)
@@ -110,7 +159,7 @@ fun LoginScreen(s: AppState, navController: NavController) {
                     border = BorderStroke(1.dp, Burdeos700),
                     colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White, contentColor = Burdeos800)
                 ) {
-                    Box(Modifier.size(24.dp).clip(CircleShape).background(Rosa200), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(24.dp).clip(CircleShape).background(Rosa200).clearAndSetSemantics { }, contentAlignment = Alignment.Center) {
                         Text("G", fontWeight = FontWeight.Bold, color = Burdeos700)
                     }
                     Spacer(Modifier.width(12.dp))
@@ -143,8 +192,17 @@ fun CatalogoScreen(s: AppState, navController: NavController) {
             CenterAlignedTopAppBar(
                 title = {
                     // Tocar el título alterna entre Horario 1 y Horario 2
+                    val otro = 2 - s.horarioActivo   // número (1 o 2) del otro horario
                     Text("Horario ${s.horarioActivo + 1} ▾", fontWeight = FontWeight.Bold,
-                        modifier = Modifier.clickable { s.horarioActivo = 1 - s.horarioActivo })
+                        modifier = Modifier
+                            .clickable(role = Role.Button, onClickLabel = "Cambiar al Horario $otro") {
+                                s.horarioActivo = 1 - s.horarioActivo
+                            }
+                            .minimumInteractiveComponentSize()
+                            .semantics {
+                                contentDescription = "Horario ${s.horarioActivo + 1} activo"
+                                liveRegion = LiveRegionMode.Polite
+                            })
                 },
                 colors = barColors()
             )
@@ -157,7 +215,7 @@ fun CatalogoScreen(s: AppState, navController: NavController) {
                     }
                 },
                 containerColor = Burdeos700, contentColor = Color.White
-            ) { Text("Mi horario", fontWeight = FontWeight.SemiBold) }
+            ) { Text("Mis horarios", fontWeight = FontWeight.SemiBold) }
         }
     ) { pad ->
         Column(Modifier.padding(pad).padding(horizontal = 16.dp)) {
@@ -192,7 +250,8 @@ fun CatalogoScreen(s: AppState, navController: NavController) {
                     } 
                 }
                 if (lista.isEmpty()) item {
-                    Text("No se encontraron talleres.", color = TextoSuave, modifier = Modifier.padding(16.dp))
+                    Text("No se encontraron talleres.", color = TextoSuave,
+                        modifier = Modifier.padding(16.dp).semantics { liveRegion = LiveRegionMode.Polite })
                 }
             }
         }
@@ -208,7 +267,7 @@ private fun TarjetaTaller(t: Taller, onClick: () -> Unit) {
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             // Marcador de posición de la ilustración
-            Box(Modifier.size(80.dp).clip(RoundedCornerShape(16.dp)).background(Rosa200), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(80.dp).clip(RoundedCornerShape(16.dp)).background(Rosa200).clearAndSetSemantics { }, contentAlignment = Alignment.Center) {
                 Text(t.nombre.first().toString(), fontSize = 32.sp, fontWeight = FontWeight.Bold, color = Burdeos700)
             }
             Spacer(Modifier.width(12.dp))
@@ -263,7 +322,8 @@ fun DetalleScreen(s: AppState, navController: NavController) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Taller: ${t.nombre}", style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold, color = Burdeos800, modifier = Modifier.weight(1f))
+                        fontWeight = FontWeight.Bold, color = Burdeos800,
+                        modifier = Modifier.weight(1f).semantics { heading() })
                     Surface(shape = RoundedCornerShape(50), color = Burdeos700) {
                         Text("${t.secciones.size} secciones", color = Color.White, fontSize = 12.sp,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
@@ -282,7 +342,10 @@ fun DetalleScreen(s: AppState, navController: NavController) {
                 )
             }
             items(secciones, key = { it.id }) { sec -> TarjetaSeccion(s, t, sec, navController) }
-            if (secciones.isEmpty()) item { Text("Ningún docente coincide.", color = TextoSuave) }
+            if (secciones.isEmpty()) item {
+                Text("Ningún docente coincide.", color = TextoSuave,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            }
         }
     }
 }
@@ -291,6 +354,8 @@ fun DetalleScreen(s: AppState, navController: NavController) {
 private fun TarjetaSeccion(s: AppState, t: Taller, sec: Seccion, navController: NavController) {
     val vac = s.vacantesDe(sec)
     val agregada = s.yaAgregada(sec)
+    val compat = s.compatibilidad(t, sec)
+    val pocas = vac in 1..5
     val colorVac = if (vac <= 5) RojoVacantes else Burdeos700
 
     Card(
@@ -307,17 +372,37 @@ private fun TarjetaSeccion(s: AppState, t: Taller, sec: Seccion, navController: 
                     Text("Horas", fontSize = 12.sp, color = TextoSuave)
                     Text(sec.horas, color = TextoOscuro)
                 }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Vacantes: el estado "pocas/sin vacantes" se dice con texto, no solo con color rojo
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.clearAndSetSemantics {
+                        contentDescription = when {
+                            vac == 0 -> "Sin vacantes"
+                            pocas -> "$vac vacantes, quedan pocas"
+                            else -> "$vac vacantes"
+                        }
+                    }
+                ) {
                     Text("Vacantes", fontSize = 12.sp, color = TextoSuave)
                     Surface(shape = RoundedCornerShape(12.dp), color = Rosa100) {
                         Text("$vac", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = colorVac,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                     }
+                    if (vac == 0 || pocas) {
+                        Text(if (vac == 0) "Sin vacantes" else "Pocas", fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold, color = TextoOscuro)
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))
-            Text("Tasa de elección (%)", fontSize = 12.sp, color = TextoSuave)
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Antes "Tasa de elección (%)": se renombra y se explica
+            Text("Popularidad", fontSize = 12.sp, color = TextoSuave)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clearAndSetSemantics {
+                    contentDescription = "Popularidad: ${sec.tasa} por ciento de estudiantes la eligen"
+                }
+            ) {
                 LinearProgressIndicator(
                     progress = { sec.tasa / 100f },
                     modifier = Modifier.weight(1f).height(8.dp).clip(RoundedCornerShape(50)),
@@ -326,25 +411,63 @@ private fun TarjetaSeccion(s: AppState, t: Taller, sec: Seccion, navController: 
                 Spacer(Modifier.width(10.dp))
                 Text("${sec.tasa}%", fontWeight = FontWeight.Bold, color = Burdeos800)
             }
+            Text("Porcentaje de estudiantes que eligen esta sección", fontSize = 12.sp, color = TextoSuave)
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(
-                    onClick = { 
-                        s.previsualizar(t, sec)
-                        navController.navigate(Ruta.Horarios.ruta) {
-                            launchSingleTop = true
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = Ambar, contentColor = AmbarTexto)
-                ) { Text("Previsualizar") }
-                Button(
-                    onClick = { s.agregar(t, sec) },
-                    enabled = vac > 0 && !agregada,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Burdeos700)
-                ) { Text(if (agregada) "Agregado" else if (vac == 0) "Sin vacantes" else "Agregar") }
-            }
+            // Compatibilidad con el horario activo, visible antes de decidir
+            EstadoCompat(compat, Modifier.fillMaxWidth())
+            Spacer(Modifier.height(12.dp))
+            DosAcciones(
+                primera = { m ->
+                    FilledTonalButton(
+                        onClick = {
+                            s.previsualizar(t, sec)
+                            navController.navigate(Ruta.Horarios.ruta) { launchSingleTop = true }
+                        },
+                        modifier = m,
+                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = Ambar, contentColor = AmbarTexto)
+                    ) { Text("Previsualizar") }
+                },
+                segunda = { m ->
+                    Button(
+                        onClick = { s.agregar(t, sec) },
+                        enabled = vac > 0 && compat == Compat.Compatible,
+                        modifier = m,
+                        colors = ButtonDefaults.buttonColors(containerColor = Burdeos700)
+                    ) { Text(if (agregada) "Agregado" else if (vac == 0) "Sin vacantes" else "Agregar") }
+                }
+            )
+        }
+    }
+}
+
+/** Texto + icono (no solo color) que indica si la sección entra en el horario activo. */
+@Composable
+private fun EstadoCompat(c: Compat, modifier: Modifier = Modifier) {
+    val (icono, texto, tinte) = when (c) {
+        Compat.Compatible -> Triple(Icons.Default.CheckCircle, "Compatible con tu horario", Burdeos700)
+        Compat.Agregada -> Triple(Icons.Default.Check, "Ya está en tu horario", Burdeos700)
+        Compat.OtraSeccion -> Triple(Icons.Default.Info, "Ya elegiste otra sección de este taller", RojoVacantes)
+        is Compat.Cruza -> Triple(Icons.Default.Warning, "Cruza con ${c.con}", RojoVacantes)
+    }
+    Row(modifier.semantics(mergeDescendants = true) { }, verticalAlignment = Alignment.CenterVertically) {
+        Icon(icono, contentDescription = null, tint = tinte, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(texto, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextoOscuro)
+    }
+}
+
+/** Dos botones lado a lado; con texto muy aumentado se apilan para no truncar etiquetas. */
+@Composable
+private fun DosAcciones(primera: @Composable (Modifier) -> Unit, segunda: @Composable (Modifier) -> Unit) {
+    if (LocalDensity.current.fontScale > 1.3f) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            primera(Modifier.fillMaxWidth())
+            segunda(Modifier.fillMaxWidth())
+        }
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            primera(Modifier.weight(1f))
+            segunda(Modifier.weight(1f))
         }
     }
 }
@@ -375,40 +498,69 @@ fun HorariosScreen(s: AppState, navController: NavController) {
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Spacer(Modifier.height(4.dp))
-            if (s.preview != null) {
+            Text("Toca un curso de taller en la grilla para quitarlo; podrás deshacerlo.",
+                fontSize = 14.sp, color = TextoOscuro)
+            val p = s.preview
+            if (p != null) {
+                val compat = s.compatibilidadPreview()
+                val bloqueado = compat != null && compat != Compat.Compatible
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color.White),
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Previsualización pendiente", fontWeight = FontWeight.Bold, color = Burdeos800)
+                        Text("Previsualización pendiente", fontWeight = FontWeight.Bold, color = Burdeos800,
+                            modifier = Modifier.semantics { heading() })
                         Text(
-                            "${s.preview!!.titulo}: ${s.preview!!.dias.joinToString { NOMBRES_DIAS_CORTO[it] }}, " +
-                                "${hora(s.preview!!.inicio)}–${hora(s.preview!!.fin)}. Revisa los cruces antes de confirmar.",
+                            "${p.titulo}: ${p.dias.joinToString { NOMBRES_DIAS_CORTO[it] }}, " +
+                                "${hora(p.inicio)}–${hora(p.fin)}.",
                             color = TextoSuave
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = { s.preview = null },
-                                modifier = Modifier.weight(1f)
-                            ) { Text("Descartar") }
-                            Button(
-                                onClick = { s.confirmarPreview() },
-                                enabled = s.preview != null,
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.buttonColors(containerColor = Burdeos700)
-                            ) { Text("Confirmar taller") }
+                        if (compat != null) {
+                            // Aviso persistente (no desaparece solo) y anunciado por TalkBack
+                            Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
+                                EstadoCompat(compat, Modifier.fillMaxWidth())
+                                if (bloqueado) {
+                                    Text(
+                                        if (compat is Compat.Cruza)
+                                            "No se puede confirmar con este cruce. Elige otra sección o usa el otro horario si ahí no cruza."
+                                        else "Solo puedes llevar una sección por taller en cada horario.",
+                                        fontSize = 13.sp, color = TextoOscuro
+                                    )
+                                    TextButton(onClick = { s.preview = null; navController.popBackStack() }) {
+                                        Text("Elegir otra sección")
+                                    }
+                                }
+                            }
                         }
+                        DosAcciones(
+                            primera = { m ->
+                                OutlinedButton(onClick = { s.preview = null }, modifier = m) { Text("Descartar") }
+                            },
+                            segunda = { m ->
+                                Button(
+                                    onClick = { s.confirmarPreview() },
+                                    enabled = !bloqueado,
+                                    modifier = m,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Burdeos700)
+                                ) { Text("Confirmar taller") }
+                            }
+                        )
                     }
                 }
             }
             for (i in 0..1) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Horario ${i + 1}", fontSize = 18.sp, fontWeight = FontWeight.Bold,
-                        color = Burdeos800, modifier = Modifier.weight(1f))
+                        color = Burdeos800,
+                        modifier = Modifier.weight(1f).semantics { heading() })
                     FilterChip(
                         selected = s.horarioActivo == i, onClick = { s.horarioActivo = i },
+                        modifier = Modifier.semantics {
+                            contentDescription = if (s.horarioActivo == i) "Horario ${i + 1}, activo"
+                            else "Usar el Horario ${i + 1}"
+                        },
                         label = { Text(if (s.horarioActivo == i) "Activo" else "Usar este") },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = Burdeos700, selectedLabelColor = Color.White)
@@ -421,10 +573,10 @@ fun HorariosScreen(s: AppState, navController: NavController) {
                 )
                 Spacer(Modifier.height(8.dp))
             }
-            Text("Toca un curso de taller para quitarlo del horario.", fontSize = 12.sp, color = TextoSuave)
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Leyenda(Indigo, "Cursos de matrícula general")
                 Leyenda(Coral, "Cursos de talleres")
+                Leyenda(Ambar, "Previsualización (aún sin confirmar)")
             }
             Spacer(Modifier.height(24.dp))
         }
@@ -436,7 +588,7 @@ private fun Leyenda(color: Color, texto: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(14.dp).clip(RoundedCornerShape(4.dp)).background(color))
         Spacer(Modifier.width(6.dp))
-        Text(texto, fontSize = 12.sp, color = TextoOscuro)
+        Text(texto, fontSize = 13.sp, color = TextoOscuro)
     }
 }
 
@@ -445,37 +597,46 @@ private fun Leyenda(color: Color, texto: String) {
 fun Grilla(bloques: List<Bloque>, preview: Bloque?, onQuitar: (Bloque) -> Unit) {
     val horaIni = 8
     val horaFin = 18
-    val altoHora = 40.dp
+    // Escala con el tamaño de fuente del sistema para que el texto no se recorte
+    val fs = LocalDensity.current.fontScale.coerceIn(1f, 2f)
+    val altoHora = 40.dp * fs
     val altoTotal = altoHora * (horaFin - horaIni)
+    val altoEncabezado = 22.dp * fs
     val todos = bloques + listOfNotNull(preview)
 
     Surface(shape = RoundedCornerShape(16.dp), color = Color.White, shadowElevation = 2.dp) {
         Row(Modifier.padding(8.dp)) {
-            Column(Modifier.width(38.dp)) {
-                Spacer(Modifier.height(22.dp))
+            Column(Modifier.width(38.dp * fs.coerceAtMost(1.5f))) {
+                Spacer(Modifier.height(altoEncabezado))
                 Box(Modifier.height(altoTotal)) {
                     for (h in horaIni until horaFin) {
-                        Text("$h:00", fontSize = 10.sp, color = TextoSuave,
+                        Text("$h:00", fontSize = 11.sp, color = TextoSuave,
                             modifier = Modifier.offset(y = altoHora * (h - horaIni)))
                     }
                 }
             }
-            LETRAS_DIAS.forEachIndexed { d, letra ->
+            NOMBRES_DIAS_CORTO.forEachIndexed { d, nombreDia ->   // "Lun Mar Mié Jue Vie", igual que en el resto de la app
                 Column(Modifier.weight(1f)) {
-                    Text(letra, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Burdeos700,
-                        textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().height(22.dp))
+                    Text(nombreDia, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Burdeos700,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().height(altoEncabezado).semantics { heading() })
                     Box(
                         Modifier.fillMaxWidth().height(altoTotal)
-                            .border(0.5.dp, Rosa200)
+                            .border(1.dp, LineaGrilla)
                     ) {
                         for (h in 1 until (horaFin - horaIni)) {
-                            HorizontalDivider(Modifier.offset(y = altoHora * h), color = Rosa100)
+                            HorizontalDivider(Modifier.offset(y = altoHora * h), color = LineaGrilla.copy(alpha = 0.55f))
                         }
                         todos.filter { d in it.dias }.forEach { b ->
                             val color = when (b.tipo) {
                                 Tipo.General -> Indigo
                                 Tipo.Taller -> Coral
                                 Tipo.Preview -> Ambar
+                            }
+                            val tipoTexto = when (b.tipo) {
+                                Tipo.General -> "Curso de matrícula general"
+                                Tipo.Taller -> "Curso de taller"
+                                Tipo.Preview -> "Previsualización"
                             }
                             Box(
                                 Modifier
@@ -484,13 +645,23 @@ fun Grilla(bloques: List<Bloque>, preview: Bloque?, onQuitar: (Bloque) -> Unit) 
                                     .fillMaxWidth().padding(1.dp)
                                     .clip(RoundedCornerShape(6.dp)).background(color)
                                     .then(if (b.tipo == Tipo.Preview)
-                                        Modifier.border(1.5.dp, AmbarTexto, RoundedCornerShape(6.dp)) else Modifier)
-                                    .clickable(enabled = b.tipo == Tipo.Taller) { onQuitar(b) },
+                                        Modifier.border(1.5.dp, AmbarTexto, RoundedCornerShape(6.dp))
+                                    else Modifier.border(1.dp, Burdeos800, RoundedCornerShape(6.dp)))
+                                    .clickable(
+                                        enabled = b.tipo == Tipo.Taller,
+                                        onClickLabel = "Quitar ${b.titulo} del horario",
+                                        role = Role.Button
+                                    ) { onQuitar(b) }
+                                    .semantics {
+                                        contentDescription = "$tipoTexto: ${b.titulo}, $nombreDia, " +
+                                            "de ${hora(b.inicio)} a ${hora(b.fin)}"
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(b.titulo, fontSize = 9.sp, fontWeight = FontWeight.SemiBold, maxLines = 2,
-                                    color = if (b.tipo == Tipo.Preview) AmbarTexto else Color.White,
-                                    textAlign = TextAlign.Center)
+                                Text(b.titulo, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 2,
+                                    color = if (b.tipo == Tipo.Preview) AmbarTexto else TextoOscuro,   // blanco sobre Coral era 2.25:1; oscuro da 7.8:1
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.clearAndSetSemantics { })
                             }
                         }
                     }
@@ -499,4 +670,3 @@ fun Grilla(bloques: List<Bloque>, preview: Bloque?, onQuitar: (Bloque) -> Unit) 
         }
     }
 }
-

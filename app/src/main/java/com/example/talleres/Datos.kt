@@ -84,12 +84,25 @@ val TALLERES = listOf(
 
 enum class Tipo { General, Taller, Preview }
 
+/** Resultado de comparar una sección con el horario activo (mejora: reconocimiento y prevención de errores). */
+sealed class Compat {
+    object Compatible : Compat()
+    object Agregada : Compat()
+    object OtraSeccion : Compat()          // ya hay otra sección del mismo taller
+    data class Cruza(val con: String) : Compat()
+}
+
+/** Datos del resumen que se muestra tras confirmar un taller. */
+class Confirmacion(val taller: Taller, val seccion: Seccion, val horario: Int)
+
 /** Estado de toda la app (en memoria). */
 class AppState {
     var tallerSel by mutableStateOf<Taller?>(null)
     var horarioActivo by mutableIntStateOf(0)
     var preview by mutableStateOf<Bloque?>(null)
     var mensaje by mutableStateOf<String?>(null)
+    var deshacer by mutableStateOf<(() -> Unit)?>(null)          // acción "Deshacer" del aviso
+    var confirmacion by mutableStateOf<Confirmacion?>(null)      // resumen persistente tras agregar
 
     val vacantes = mutableStateMapOf<Int, Int>().apply {
         TALLERES.flatMap { it.secciones }.forEach { put(it.id, it.vacantes) }
@@ -120,13 +133,28 @@ class AppState {
 
     fun abrirTaller(t: Taller) { tallerSel = t}
 
+    /** Estado de la sección frente al horario activo; se muestra en la tarjeta ANTES de elegir. */
+    fun compatibilidad(t: Taller, s: Seccion): Compat {
+        val h = horarios[horarioActivo]
+        return when {
+            yaAgregada(s) -> Compat.Agregada
+            h.any { it.tallerId == t.id } -> Compat.OtraSeccion
+            else -> h.firstOrNull { solapa(it, bloqueDe(t, s, Tipo.Preview)) }
+                ?.let { Compat.Cruza(it.titulo) } ?: Compat.Compatible
+        }
+    }
+
+    fun compatibilidadPreview(): Compat? {
+        val p = preview ?: return null
+        val t = TALLERES.firstOrNull { it.id == p.tallerId } ?: return null
+        val sec = t.secciones.firstOrNull { it.id == p.seccionId } ?: return null
+        return compatibilidad(t, sec)
+    }
+
     /** Muestra la sección en la grilla sin confirmarla. */
     fun previsualizar(t: Taller, s: Seccion) {
         val b = bloqueDe(t, s, Tipo.Preview)
-        preview = b
-        horarios[horarioActivo].firstOrNull { solapa(it, b) }?.let {
-            mensaje = "Ojo: esta sección cruza con ${it.titulo}"
-        }
+        preview = b   // el cruce ya no se avisa con un mensaje efímero: queda visible en la tarjeta
     }
 
     /** Confirma la sección que se está mostrando como previsualización. */
@@ -161,7 +189,7 @@ class AppState {
                     h.add(nuevo)
                     vacantes[s.id] = vacantesDe(s) - 1
                     preview = null
-                    mensaje = "${t.nombre} agregado al Horario $n"
+                    confirmacion = Confirmacion(t, s, n)
                 }
             }
         }
@@ -169,8 +197,20 @@ class AppState {
 
     fun quitar(indice: Int, b: Bloque) {
         if (b.tipo != Tipo.Taller) return
-        horarios[indice].remove(b)
+        val lista = horarios[indice]
+        val pos = lista.indexOf(b)
+        if (pos < 0) return
+        lista.removeAt(pos)
         b.seccionId?.let { vacantes[it] = (vacantes[it] ?: 0) + 1 }
         mensaje = "${b.titulo} quitado del Horario ${indice + 1}"
+        deshacer = {
+            val sid = b.seccionId
+            if (sid != null && (vacantes[sid] ?: 0) > 0) {
+                lista.add(minOf(pos, lista.size), b)
+                vacantes[sid] = (vacantes[sid] ?: 0) - 1
+            } else {
+                mensaje = "No se pudo deshacer: la sección ya no tiene vacantes"
+            }
+        }
     }
 }
